@@ -2,7 +2,7 @@ import ast
 import traceback
 
 userFunctions = {}
-renames = ['vex.pragma']
+renames = ['vex.pragma','vex.motor']
 classNames = []
 indent = '  '
 sameLineBraces = True
@@ -24,6 +24,10 @@ def module_rename(aNode):
         asC += ')'
       asC += '\n'
       return asC
+  elif aNode.func.print_c() == 'vex.motor':
+    asC = 'motor[' + aNode.args[0].print_c()
+    asC += '] = ' + aNode.args[1].print_c()
+    return asC
   return 'Unknown function. This should not happen'
 
 def escape_string(s, unicode = False, max_length = 200):
@@ -425,6 +429,10 @@ class C_Call(ast.Call):
   def print_c(self):
     if self.func.print_c() in renames:
       return module_rename(self)
+    if isinstance(self.func,C_Attribute):
+      # Convert OOP calls to regular function calls
+      self.args.insert(0,self.func.value)
+      self.func = C_Name(self.func.attr,None)
     asC = self.func.print_c() + '('
     useComma = False
     for arg in self.args:

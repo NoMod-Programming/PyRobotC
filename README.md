@@ -22,7 +22,10 @@ This allows `#pragma` statements to be used with PyRobotC. With a single argumen
 With multiple arguments, it uses the first one as the "name" for the function, and the rest as arguments, such as the following example:
 
     vex.pragma(config, I2C_Usage, I2C1, i2cSensors) -> #pragma config(I2C_Usage, I2C1, i2cSensors)
-    
+
+#### vex.`motor(port, speed)`
+This functions sets the specified motor on `port` to the specified `speed` (from 127 to -127).
+
 #### More functions coming soon!
 
 ### The `cfuncs` module

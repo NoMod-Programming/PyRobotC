@@ -26,6 +26,12 @@ With multiple arguments, it uses the first one as the "name" for the function, a
 #### vex.`motor(port, speed)`
 This functions sets the specified motor on `port` to the specified `speed` (from 127 to -127).
 
+#### vex.`slaveMotors(master,slave1[, slave2, ...])`
+Slave motors to a master, that way all commands sent to the master will be sent to the slaves.
+
+#### vex.`motorReversed(port, isReversed)`
+Set whether or not a motor's direction is reversed by 180 degrees. Useful when a mechanical design results in a logical "reversed" condition of a motor
+
 #### More functions coming soon!
 
 ### The `cfuncs` module

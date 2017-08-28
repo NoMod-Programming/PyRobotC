@@ -1,11 +1,15 @@
 import ast
 import traceback
+import os
+import sys
 
 userFunctions = {}
-renames = ['vex.pragma','vex.motor']
+renames = ['vex.pragma','vex.motor','vex.slaveMotors','vex.motorReversed']
 classNames = []
 indent = '  '
 sameLineBraces = True
+
+compiled = {}
 
 def module_rename(aNode):
   if aNode.func.print_c() == 'vex.pragma':
@@ -26,6 +30,16 @@ def module_rename(aNode):
       return asC
   elif aNode.func.print_c() == 'vex.motor':
     asC = 'motor[' + aNode.args[0].print_c()
+    asC += '] = ' + aNode.args[1].print_c()
+    return asC
+  elif aNode.func.print_c() == 'vex.slaveMotors':
+    masterMotor = aNode.args.pop(0).print_c()
+    asC = ''
+    for slave in aNode.args:
+      asC += 'slaveMotor(' + slave.print_c() + ', ' + masterMotor + ');\n'
+    return asC[:-2]
+  elif aNode.func.print_c() == 'vex.motorReversed':
+    asC = 'bMotorReflected[' + aNode.args[0].print_c()
     asC += '] = ' + aNode.args[1].print_c()
     return asC
   return 'Unknown function. This should not happen'
@@ -173,19 +187,28 @@ class C_Name(ast.Name):
     pass
   
   def print_c(self):
+    if self.id == 'True':
+      return 'true'
+    elif self.id == 'False':
+      return 'false'
+    elif self.id == 'None':
+      return '0'
     return self.id
 
-class C_NameConstant(ast.NameConstant):
-  def prepare(self):
-    pass
+if "NameConstant" in ast.__dict__:
+  class C_NameConstant(ast.NameConstant):
+    def prepare(self):
+      pass
   
-  def print_c(self):
-    if self.value == True:
-      # True
-      return '1'
-    else:
-      # False or None
-      return '0'
+    def print_c(self):
+      if self.value == True:
+        # True
+        return 'true'
+      elif self.value == False:
+        # False
+        return 'false'
+      else:
+        return '0'
       
 class C_Expr(ast.Expr):
   def prepare(self):
@@ -491,23 +514,23 @@ class C_Assign(ast.Assign):
     asC += self.value.print_c()
     return asC
   
-
-class C_AnnAssign(ast.AnnAssign):
-  def prepare(self):
-    pass
+if "AnnAssign" in ast.__dict__:
+  class C_AnnAssign(ast.AnnAssign):
+    def prepare(self):
+      pass
     
-  def print_c(self):
-    asC = self.annotation.print_c() + ' '
-    asC += self.target.print_c()
-    if isinstance(self.value, C_Call) and self.value.func.print_c() in classNames:
-      asC += ';\n'
-      asC += self.value.func.print_c() + '___init__('
+    def print_c(self):
+      asC = self.annotation.print_c() + ' '
       asC += self.target.print_c()
-      asC += self.value.print_args() + ')'
-    else:
-      if self.value:
-        asC += ' = ' + self.value.print_c()
-    return asC
+      if isinstance(self.value, C_Call) and self.value.func.print_c() in classNames:
+        asC += ';\n'
+        asC += self.value.func.print_c() + '___init__('
+        asC += self.target.print_c()
+        asC += self.value.print_args() + ')'
+      else:
+        if self.value:
+          asC += ' = ' + self.value.print_c()
+      return asC
   
 
 class C_AugAssign(ast.AugAssign):
@@ -542,7 +565,8 @@ class C_Import(ast.Import):
     pass
     
   def print_c(self):
-    return '#include ' + self.names[0].name + '\n'
+    importName = '/'.join(self.names[0].name.split('.'))
+    return '#include ' + importName + '.c\n'
 
 
 class C_If(ast.If):
@@ -734,6 +758,11 @@ class CNodeTransformer(ast.NodeVisitor):
     self.toPrepare = []
     self.currentClass = None
     super(CNodeTransformer,self).__init__(*args,**kwargs)
+    
+  def visit_C_Import(self, aNode):
+    # Make sure that we've compiled this file.
+    filePath = '/'.join(aNode.names[0].name.split('.')) + '.py'
+    compile_to_c(filePath)
 
   def visit_C_ClassDef(self, aNode):
     previousClass = self.currentClass
@@ -757,11 +786,48 @@ class CNodeTransformer(ast.NodeVisitor):
     method = 'visit_' + node.__class__.__name__
     visitor = getattr(self, method, self.generic_visit)
     visitor(node) # Recursively replace classes
-    
+
+def compile_to_c(filename):
+  if not os.path.exists(filename):
+    if os.path.exists(os.path.join(os.path.dirname(os.path.realpath(__file__)),filename)):
+      filename = os.path.join(os.path.dirname(os.path.realpath(__file__)),filename)
+    else:
+      if os.path.exists(os.path.join(os.path.dirname(os.path.realpath(sys.argv[1])),filename)):
+        filename = os.path.join(os.path.dirname(os.path.realpath(sys.argv[1])),filename)
+      else:
+        raise FileNotFoundError(filename)
+  if not os.path.abspath(filename) in compiled:
+    module = ast.parse(open(filename, 'r').read())
+    compiled[os.path.abspath(filename)] = '' # At least fill it in
+    transformer = CNodeTransformer()
+    transformer.visit(module)
+    for nodeToPrepare in transformer.toPrepare:
+      nodeToPrepare.prepare()
+    compiled[os.path.abspath(filename)] = module.print_c()
+
+def commonprefix(l):
+  # this unlike the os.path.commonprefix version
+  # always returns path prefixes as it compares
+  # path component wise
+  cp = []
+  ls = [p.split(os.path.sep) for p in l]
+  ml = min( len(p) for p in ls )
+  for i in range(ml):
+    s = set( p[i] for p in ls )         
+    if len(s) != 1:
+        break
+    cp.append(s.pop())
+  return os.path.sep.join(cp)
+
 if __name__ == '__main__':
-  module = ast.parse(open('vexCode.py','r').read())
-  transformer = CNodeTransformer()
-  transformer.visit(module)
-  for nodeToPrepare in transformer.toPrepare:
-    nodeToPrepare.prepare()
-  print(module.print_c())
+  if len(sys.argv) < 2:
+    print(f"Usage: {__file__} [file]")
+    sys.exit(1)
+  compile_to_c(sys.argv[1])
+  common = commonprefix(compiled)
+  withRelNames = {os.path.relpath(abspath,common):contents for abspath,contents in compiled.items()}
+  for file,contents in withRelNames.items():
+    filename = os.path.join(os.path.dirname(os.path.realpath(sys.argv[1])),os.path.join('output',os.path.splitext(file)[0] + '.c'))
+    os.makedirs(os.path.dirname(filename), exist_ok=True)
+    with open(filename,'w') as c_file:
+      c_file.write(contents)
